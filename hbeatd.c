@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define HBEATD_VERSION "1.0.0 beta"
+#define HBEATD_VERSION "1.1.0 beta"
 
 #define INT_SLEEP 1
 #define BUFLEN 1
@@ -147,10 +147,12 @@ int main(int argc, char *argv[])
 	unsigned long int *nodes_b = NULL;
 	unsigned long int node_list1[50];
 	unsigned long int node_list2[50];
+	unsigned long int dead_nodes[50];
 	
 	int *count = NULL;
 	int count_l1 = 0;
 	int count_l2 = 0;
+	int count_dead = 0;
 	
 	int complete = 0;
 	
@@ -199,7 +201,44 @@ int main(int argc, char *argv[])
 			/* compare the lists */
 			else
 			{
-				if(count_l1 != count_l2) /* this if should be removes */
+				/* check dead nodes list */
+				for(i = 0; i < count_dead; i++)
+				{
+					found = 0;
+					for(n = 0; n < count_l1; n++)
+					{
+						if(dead_nodes[i] == nodes[n])
+						{
+							/* node's not dead! */
+							found = 1;
+							break;
+						}
+					}
+					
+					if(!found)
+					{
+						/* do something (run script) */
+						if(fexists(SCRIPT_PATH))
+						{
+							pid_t pID = fork();
+							if (pID == 0)
+							{
+								addr.s_addr = dead_nodes[i];
+								char *ip_str = inet_ntoa(addr);
+								printf("dead: %s\n", ip_str);
+							
+								execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
+								exit(0);
+							}
+						}
+					}
+				}
+				
+				/* clear dead nodes list */
+				count_dead = 0;
+				
+				/* compare the lists */
+				if(count_l1 != count_l2) /* this if should be removed */
 				{
 					for(i = 0; i < count_l2; i++)
 					{
@@ -215,20 +254,12 @@ int main(int argc, char *argv[])
 					
 						if(!found)
 						{
+							/* not found */
+							/* add to dead nodes list */
 							addr.s_addr = nodes_b[i];
 							char *ip_str = inet_ntoa(addr);
-							printf("dead: %s\n", ip_str);
-								
-							/* do something (run script) */
-							if(fexists(SCRIPT_PATH))
-							{
-								pid_t pID = fork();
-								if (pID == 0)
-								{
-									execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
-									exit(0);
-								}
-							}
+							printf("missed: %s\n", ip_str);
+							dead_nodes[count_dead++] = nodes_b[i];
 						}
 					}
 					
