@@ -7,8 +7,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#define INT_SLEEP 1
 #define BUFLEN 1
-#define PORT 5300
+#define SRV_PORT 6220
 #define SRV_IP "127.0.0.1"
 
 static void pulse(void);
@@ -19,10 +20,13 @@ static void die(char *s)
 }
 static void usage(void)
 {
-	(void)fprintf(stderr, "usage: hbeatd [ -v [-s | -p] ]\n");
+	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d]] -P -r]\n");
 	exit(1);
 }
 
+char *dvalue;
+int Pvalue;
+int rvalue;
 
 int main(int argc, char *argv[])
 {
@@ -30,11 +34,10 @@ int main(int argc, char *argv[])
 	int pflag, sflag, vflag;
 	
 	pflag = sflag = vflag = 0;
+	dvalue = NULL;
+	Pvalue = rvalue = 0;
 	
-	if (argc < 2)
-		usage();
-	
-	while ((c = getopt(argc, argv, "spvh")) != -1)
+	while ((c = getopt(argc, argv, "spvhd:P:r:")) != -1)
 	{
 		switch (c) {
 			case 's':
@@ -51,21 +54,38 @@ int main(int argc, char *argv[])
 			case 'h':
 				usage();
 				break;
+			case 'd':
+			     dvalue = optarg;
+			     break;
+			case 'P':
+			     Pvalue = atoi(optarg);
+			     break;
+		     	case 'r':
+			     rvalue = atoi(optarg);
+			     break;
 			case '?':
 			default:
 				usage();
 		}
 	}
 	
+	if(dvalue == NULL)
+		dvalue = SRV_IP;
+	if(Pvalue == 0)
+		Pvalue = SRV_PORT;
+	if(rvalue == 0)
+		rvalue = INT_SLEEP;
 
 	if(!sflag)
 	{
 		printf("PULSE MODE\n");
+		printf("Destination %s:%d\n", dvalue, Pvalue);
 		(void)pulse();
 		exit(0);
 	}
 	
 	printf("SENSOR MODE\n");
+	printf("Listening: *:%d\n", Pvalue);
 	
 	/* socket */
 	struct sockaddr_in sock, si_other;
@@ -81,7 +101,7 @@ int main(int argc, char *argv[])
 	memset((char *) &addr, 0, sizeof(addr));
 	
 	sock.sin_family = AF_INET;
-	sock.sin_port = htons(PORT);
+	sock.sin_port = htons(Pvalue);
 	sock.sin_addr.s_addr = htonl(INADDR_ANY);
 	
 	if(bind(s, &sock, sizeof(sock)) == -1)
@@ -134,7 +154,8 @@ int main(int argc, char *argv[])
 					if(nodes[i] == si_other.sin_addr.s_addr)
 					{
 						/* the node is already in the list, round is complete */
-						printf("[ round complete ]\n");
+						if(vflag)
+							printf("[ round complete ]\n");
 						complete++;
 						add = 0;
 						break;
@@ -168,7 +189,10 @@ int main(int argc, char *argv[])
 						if(!found)
 						{
 							addr.s_addr = nodes_b[i];
-							printf("Dead: %s\n", inet_ntoa(addr));
+							if(vflag)
+								printf("Dead: %s\n", inet_ntoa(addr));
+								
+							/* do something */
 						}
 					}
 					
@@ -192,7 +216,7 @@ int main(int argc, char *argv[])
 		}
 		else
 		{
-			fprintf(stderr, "Detected malformed heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
+			fprintf(stderr, "error: detected malformed heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
 		}
 	}
 
@@ -211,9 +235,9 @@ static void pulse(void)
 
 	memset((char *) &sock, 0, sizeof(sock));
 	sock.sin_family = AF_INET;
-	sock.sin_port = htons(PORT);
+	sock.sin_port = htons(Pvalue);
 
-	if (inet_aton(SRV_IP, &sock.sin_addr) == 0)
+	if (inet_aton(dvalue, &sock.sin_addr) == 0)
 		die("inet_aton() failed");
 
 	while (1)
@@ -221,7 +245,7 @@ static void pulse(void)
 		if (sendto(s, buf, BUFLEN, 0, &sock, slen) == -1)
 			die("failed to send");
 
-		sleep(1);
+		sleep(rvalue);
 	}
 
 	close(s);
