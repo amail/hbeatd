@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <string.h>
 
 #define HBEATD_VERSION "1.1.0 beta"
 
@@ -16,6 +17,7 @@
 
 
 /* settings */
+int pflag, sflag, vflag;
 char *dvalue;
 int Pvalue;
 int rvalue;
@@ -54,7 +56,6 @@ static int fexists(char *fname)
 int main(int argc, char *argv[])
 {
 	int c;
-	int pflag, sflag, vflag;
 	
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
 	sock.sin_port = htons(Pvalue);
 	sock.sin_addr.s_addr = htonl(INADDR_ANY);
 	
-	if(bind(s, &sock, sizeof(sock)) == -1)
+	if(bind(s, (struct sockaddr *)&sock, sizeof(sock)) == -1)
 		die("bind");
 
 	/* analyser
@@ -166,7 +167,7 @@ int main(int argc, char *argv[])
 
 	while(1)
 	{
-		if(recvfrom(s, buf, BUFLEN, 0, &si_other, &slen) == -1)
+		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
 
 		/* inspect heartbeat */
@@ -309,7 +310,10 @@ static void pulse(void)
 
 	while (1)
 	{
-		if (sendto(s, buf, BUFLEN, 0, &sock, slen) == -1)
+		if(vflag)
+			printf("[ heartbeat ]\n");
+			
+		if (sendto(s, buf, BUFLEN, 0, (struct sockaddr *)&sock, slen) == -1)
 			die("failed to send");
 
 		sleep(rvalue);
