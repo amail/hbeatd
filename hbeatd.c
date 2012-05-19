@@ -55,18 +55,6 @@ static int fexists(char *fname)
 
 int main(int argc, char *argv[])
 {
-	/* daemonize */
-	int f;
-	f = fork();
-        if (f < 0)
-        	die("could not fork process");
-        /* exit parent */
-        if (f > 0)
-        	exit(0);
-        /* done */
-
-        setsid();
-
 	int c;
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
@@ -111,7 +99,23 @@ int main(int argc, char *argv[])
 	if(rvalue == 0)
 		rvalue = INT_SLEEP;
 
-	/* let's start it */
+	/* daemonize */
+	if(!vflag)
+	{
+		int f;
+		f = fork();
+	
+		if (f < 0)
+			die("could not fork process");
+
+		if (f > 0)
+			exit(0);
+			
+		setsid();
+		/* done */
+	}
+
+	/* let's start */
 	(void)printf("hbeatd version %s\n%s\n\n", HBEATD_VERSION, "Copyright (c) 2012 Comfirm AB");
 
 	if(!sflag)
@@ -196,7 +200,16 @@ int main(int argc, char *argv[])
 					{
 						/* the node is already in the list, round is complete */
 						if(vflag)
+						{
 							printf("[ round complete ]\n");
+							int b;
+							for(b = 0; b < *count; b++)
+							{
+								addr.s_addr = nodes[b];
+								char *ip_str = inet_ntoa(addr);
+								printf(" * %s\n", ip_str);
+							}	
+						}
 						complete++;
 						add = 0;
 						break;
