@@ -109,11 +109,13 @@ int main(int argc, char *argv[])
 
 	/* analyser
 	   ========
-	  - collect heartbeats under 4 seconds
-	  - put away those in an array
-	  - continue collecting for another 4 seconds
-	  - compare the two lists for changes
-	  - ALERT
+	  1 collect heartbeats for one round
+	  2 put away those in an array
+	  3 continue collecting for another round
+	  4 compare the two lists for changes
+	  	if they match, goto step 3
+	  	else goto step 5
+	  5 ALERT
 	*/
 	int i, n;
 	unsigned long int *nodes = NULL;

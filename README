@@ -3,7 +3,7 @@ Comfirm hbeatd - README
 =======================
 (C) 2012 Comfirm AB
 
-Simple and lightweight heartbeat sensor and pulse. Zero configuration.
+Simple, lightweight and zero-configuration heartbeat sensor and pulse generator.
 
 Authors:
 Jack Engqvist Johansson, Comfirm AB
@@ -15,9 +15,11 @@ See the LICENSE file
 
 Usage
 =====
- usage: hbeatd [ -v [-s | -p] ]
+ usage: hbeatd [-v [-s | -p [-d]] -P -r]
   -p	run as heartbeat (pulse)
   -s	run as heartbeat sensor
   -v	verbose mode
+  -d	[pulse only] destination ip adress
+  -P	destination port number
 
 
