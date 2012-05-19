@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define HBEATD_VERSION "1.1.0 beta"
+#define HBEATD_VERSION "1.2.0 beta"
 
 #define INT_SLEEP 1
 #define BUFLEN 1
@@ -55,8 +55,19 @@ static int fexists(char *fname)
 
 int main(int argc, char *argv[])
 {
+	/* daemonize */
+	int f;
+	f = fork();
+        if (f < 0)
+        	die("could not fork process");
+        /* exit parent */
+        if (f > 0)
+        	exit(0);
+        /* done */
+
+        setsid();
+
 	int c;
-	
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
 	Pvalue = rvalue = 0;
