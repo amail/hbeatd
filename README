@@ -1,0 +1,23 @@
+=======================
+Comfirm hbeatd - README
+=======================
+(C) 2012 Comfirm AB
+
+Simple and lightweight heartbeat sensor and pulse.
+
+Authors:
+Jack Engqvist Johansson, Comfirm AB
+http://comfirm.se
+
+License:
+BSD 3-Clause
+See the LICENSE file
+
+Usage
+=====
+ usage: hbeatd [ -v [-s | -p] ]
+  -p	run as heartbeat (pulse)
+  -s	run as heartbeat sensor
+  -v	verbose mode
+
+
