@@ -49,6 +49,8 @@ exit
 
 Installation
 ============
- Make sure that /etc/hbeatd/rc.d exists and is executable.
+ make
+ su
+ make install
 
 
