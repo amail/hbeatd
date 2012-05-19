@@ -2,15 +2,24 @@
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
-//#include <getopt.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#define HBEATD_VERSION "1.0.0"
 
 #define INT_SLEEP 1
 #define BUFLEN 1
 #define SRV_PORT 6220
 #define SRV_IP "127.0.0.1"
+#define SCRIPT_PATH "/etc/hbeatd/rc.d"
+
+
+/* settings */
+char *dvalue;
+int Pvalue;
+int rvalue;
+
 
 static void pulse(void);
 static void die(char *s)
@@ -20,13 +29,27 @@ static void die(char *s)
 }
 static void usage(void)
 {
-	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d]] -P -r]\n");
+	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d]] -P -i]\n");
+	(void)fprintf(stderr, "  -p\trun as pulse generator (default)\n");
+	(void)fprintf(stderr, "  -s\trun as heartbeat sensor\n");
+	(void)fprintf(stderr, "  -v\tverbose mode\n");
+	(void)fprintf(stderr, "  -d\tdestination ip adress (pulse only)\n");
+	(void)fprintf(stderr, "  -P\tdestination port number\n");
+	(void)fprintf(stderr, "  -i\tinterval in seconds (default = 1)\n");
+ 
 	exit(1);
 }
-
-char *dvalue;
-int Pvalue;
-int rvalue;
+static int fexists(char *fname)
+{
+	FILE *file;
+	if ((file = fopen(fname, "r")) == NULL) {
+		fprintf(stderr, "file %s could not be opened\n", fname);
+	} else {
+		fclose(file);
+		return 1;
+	}
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -36,8 +59,8 @@ int main(int argc, char *argv[])
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
 	Pvalue = rvalue = 0;
-	
-	while ((c = getopt(argc, argv, "spvhd:P:r:")) != -1)
+
+	while ((c = getopt(argc, argv, "spvhd:P:i:")) != -1)
 	{
 		switch (c) {
 			case 's':
@@ -60,7 +83,7 @@ int main(int argc, char *argv[])
 			case 'P':
 			     Pvalue = atoi(optarg);
 			     break;
-		     	case 'r':
+		     	case 'i':
 			     rvalue = atoi(optarg);
 			     break;
 			case '?':
@@ -76,16 +99,19 @@ int main(int argc, char *argv[])
 	if(rvalue == 0)
 		rvalue = INT_SLEEP;
 
+	/* let's start it */
+	(void)printf("hbeatd version %s\n%s\n\n", HBEATD_VERSION, "Copyright (c) 2012 Comfirm AB");
+
 	if(!sflag)
 	{
 		printf("PULSE MODE\n");
-		printf("Destination %s:%d\n", dvalue, Pvalue);
+		printf("Sending heartbeats to %s:%d...\n", dvalue, Pvalue);
 		(void)pulse();
 		exit(0);
 	}
 	
 	printf("SENSOR MODE\n");
-	printf("Listening: *:%d\n", Pvalue);
+	printf("Listening on *:%d...\n", Pvalue);
 	
 	/* socket */
 	struct sockaddr_in sock, si_other;
@@ -109,13 +135,12 @@ int main(int argc, char *argv[])
 
 	/* analyser
 	   ========
-	  1 collect heartbeats for one round
-	  2 put away those in an array
-	  3 continue collecting for another round
-	  4 compare the two lists for changes
-	  	if they match, goto step 3
-	  	else goto step 5
-	  5 ALERT
+	  1) put the found nodes in an array
+	  2) continue collecting
+	  3) compare the two lists for changes
+	  	if they match, goto step 2
+	  	else goto step 4
+	  4) ALERT
 	*/
 	int i, n;
 	unsigned long int *nodes = NULL;
@@ -145,7 +170,7 @@ int main(int argc, char *argv[])
 		/* inspect heartbeat */
 		if(buf[0] == '#')
 		{
-			/* build reference lists */
+			/* build reference list */
 			if(complete != 1)
 			{
 				/* first, search for it in the list */
@@ -167,14 +192,14 @@ int main(int argc, char *argv[])
 				/* new node, add to list */
 				if(add)
 				{
-					nodes[*count] = si_other.sin_addr.s_addr; /* inet_ntoa(addr) */
+					nodes[*count] = si_other.sin_addr.s_addr;
 					*count = *count + 1;
 				}
 			}
 			/* compare the lists */
 			else
 			{
-				if(count_l1 != count_l2)
+				if(count_l1 != count_l2) /* this if should be removes */
 				{
 					for(i = 0; i < count_l2; i++)
 					{
@@ -191,10 +216,19 @@ int main(int argc, char *argv[])
 						if(!found)
 						{
 							addr.s_addr = nodes_b[i];
-							if(vflag)
-								printf("Dead: %s\n", inet_ntoa(addr));
+							char *ip_str = inet_ntoa(addr);
+							printf("dead: %s\n", ip_str);
 								
-							/* do something */
+							/* do something (run script) */
+							if(fexists(SCRIPT_PATH))
+							{
+								pid_t pID = fork();
+								if (pID == 0)
+								{
+									execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
+									exit(0);
+								}
+							}
 						}
 					}
 					
@@ -252,3 +286,4 @@ static void pulse(void)
 
 	close(s);
 }
+
