@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define HBEATD_VERSION "1.0.0"
+#define HBEATD_VERSION "1.0.0 beta"
 
 #define INT_SLEEP 1
 #define BUFLEN 1
