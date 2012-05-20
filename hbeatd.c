@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -7,7 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define HBEATD_VERSION "1.2.0 beta"
+#define HBEATD_VERSION "1.2.2 beta"
 
 #define INT_SLEEP 1
 #define BUFLEN 1
@@ -52,9 +53,25 @@ static int fexists(char *fname)
 	}
 	return 0;
 }
+void signal_handler(sig)
+int sig;
+{
+	switch(sig) {
+	case SIGHUP:
+		printf("hangup signal catched");
+		break;
+	case SIGTERM:
+		printf("terminate signal catched");
+		exit(0);
+		break;
+	}
+}
+
 
 int main(int argc, char *argv[])
 {
+	(void)printf("hbeatd version %s\n%s\n\n", HBEATD_VERSION, "Copyright (c) 2012 Comfirm AB");
+
 	int c;
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
@@ -99,35 +116,59 @@ int main(int argc, char *argv[])
 	if(rvalue == 0)
 		rvalue = INT_SLEEP;
 
-	/* daemonize */
-	if(!vflag)
-	{
-		int f;
-		f = fork();
-	
-		if (f < 0)
-			die("could not fork process");
-
-		if (f > 0)
-			exit(0);
-			
-		setsid();
-		/* done */
-	}
-
-	/* let's start */
-	(void)printf("hbeatd version %s\n%s\n\n", HBEATD_VERSION, "Copyright (c) 2012 Comfirm AB");
-
 	if(!sflag)
 	{
 		printf("PULSE MODE\n");
 		printf("Sending heartbeats to %s:%d...\n", dvalue, Pvalue);
+	}
+	else
+	{
+		printf("SENSOR MODE\n");
+		printf("Listening on *:%d...\n", Pvalue);
+	}
+
+	/* daemonize */
+	if(!vflag)
+	{
+		int f;
+		
+		/* close all descriptors */
+		for (f = getdtablesize(); f >= 0; --f)
+			close(f);
+	
+		/* fork */
+		f = fork();
+		if (f < 0)
+			die("could not fork process");
+
+		/* exit parent */
+		if (f > 0)
+			exit(0);
+		
+		/* continue */
+		setsid();
+		umask(027);
+		chdir("/");
+		
+		/* handle signals */
+		signal(SIGCHLD,SIG_IGN); /* ignore child */
+		signal(SIGTSTP,SIG_IGN); /* ignore tty signals */
+		signal(SIGTTOU,SIG_IGN);
+		signal(SIGTTIN,SIG_IGN);
+		signal(SIGHUP,signal_handler); /* catch hangup signal */
+		signal(SIGTERM,signal_handler); /* catch kill signal */
+
+		/* done */
+	}
+
+	/* pulse mode */
+	if(!sflag)
+	{
 		(void)pulse();
 		exit(0);
 	}
 	
-	printf("SENSOR MODE\n");
-	printf("Listening on *:%d...\n", Pvalue);
+	/* sensor mode */
 	
 	/* socket */
 	struct sockaddr_in sock, si_other;
