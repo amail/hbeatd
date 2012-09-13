@@ -27,7 +27,7 @@ usage: hbeatd [-v [-s | -p [-d]] -P -r]
 
 Example
 -------
-Sensor (10 seconds tolerence level):
+Sensor (10 seconds tolerance level):
  hbeatd -s -t 10
 
 Nodes (800 milliseconds pulse):
