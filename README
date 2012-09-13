@@ -21,7 +21,9 @@ Usage
   -v	verbose mode
   -d	destination ip adress (default = 127.0.0.1)
   -P	destination port number (default = 6220)
-  -i	interval in seconds (default = 1)
+  -i	interval in milliseconds (default = 1000)
+  -g	server group (default = misc)
+  -t	tolerance level (default = 4)
   
 How it works
 ============

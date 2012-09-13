@@ -7,22 +7,31 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
-#define HBEATD_VERSION "1.2.2 beta"
+#define HBEATD_VERSION "1.3.0 beta"
 
-#define INT_SLEEP 1
-#define BUFLEN 1
+#define NODE_COUNT 10000
+#define INT_SLEEP 1000
+#define BUFLEN 256
+#define SRV_GROUP "misc"
 #define SRV_PORT 6220
 #define SRV_IP "127.0.0.1"
+#define TOLERANCE 4
 #define SCRIPT_PATH "/etc/hbeatd/rc.d"
 
 
 /* settings */
 int pflag, sflag, vflag;
-char *dvalue;
-int Pvalue;
-int rvalue;
+char *dvalue, *gvalue;
+int Pvalue, rvalue, tvalue;
 
+typedef struct {
+	unsigned long int ip;
+	unsigned long int time;
+	unsigned long int uptime;
+	unsigned int live;
+} node;
 
 static void pulse(void);
 static void die(char *s)
@@ -32,13 +41,15 @@ static void die(char *s)
 }
 static void usage(void)
 {
-	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d]] -P -i]\n");
+	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d] -i -g] -P]\n");
 	(void)fprintf(stderr, "  -p\trun as pulse generator (default)\n");
 	(void)fprintf(stderr, "  -s\trun as heartbeat sensor\n");
 	(void)fprintf(stderr, "  -v\tverbose mode\n");
 	(void)fprintf(stderr, "  -d\tdestination ip adress (pulse only)\n");
-	(void)fprintf(stderr, "  -P\tdestination port number\n");
-	(void)fprintf(stderr, "  -i\tinterval in seconds (default = 1)\n");
+	(void)fprintf(stderr, "  -P\tdestination port number (default = 6220)\n");
+	(void)fprintf(stderr, "  -i\tinterval in milliseconds (default = 1000)\n");
+	(void)fprintf(stderr, "  -g\tserver group (default = misc)\n");
+	(void)fprintf(stderr, "  -t\ttolerance level (default = 4)\n");
  
 	exit(1);
 }
@@ -75,9 +86,10 @@ int main(int argc, char *argv[])
 	int c;
 	pflag = sflag = vflag = 0;
 	dvalue = NULL;
-	Pvalue = rvalue = 0;
+	gvalue = NULL;
+	Pvalue = rvalue = tvalue = 0;
 
-	while ((c = getopt(argc, argv, "spvhd:P:i:")) != -1)
+	while ((c = getopt(argc, argv, "spvhd:P:i:g:t:")) != -1)
 	{
 		switch (c) {
 			case 's':
@@ -103,6 +115,12 @@ int main(int argc, char *argv[])
 		     	case 'i':
 			     rvalue = atoi(optarg);
 			     break;
+			case 'g':
+			     gvalue = optarg;
+			     break;
+			case 't':
+			     tvalue = atoi(optarg);
+			     break;
 			case '?':
 			default:
 				usage();
@@ -115,11 +133,15 @@ int main(int argc, char *argv[])
 		Pvalue = SRV_PORT;
 	if(rvalue == 0)
 		rvalue = INT_SLEEP;
+	if(tvalue == 0)
+		tvalue = TOLERANCE;
+	if(gvalue == NULL)
+		gvalue = SRV_GROUP;
 
 	if(!sflag)
 	{
 		printf("PULSE MODE\n");
-		printf("Sending heartbeats to %s:%d...\n", dvalue, Pvalue);
+		printf("Sending heartbeats to %s:%d(%s)...\n", dvalue, Pvalue, gvalue);
 	}
 	else
 	{
@@ -169,6 +191,10 @@ int main(int argc, char *argv[])
 	}
 	
 	/* sensor mode */
+	if(!fexists(SCRIPT_PATH))
+	{
+		die("/etc/hbeatd/rc.d does not exist");
+	}
 	
 	/* socket */
 	struct sockaddr_in sock, si_other;
@@ -188,168 +214,91 @@ int main(int argc, char *argv[])
 	sock.sin_addr.s_addr = htonl(INADDR_ANY);
 	
 	if(bind(s, (struct sockaddr *)&sock, sizeof(sock)) == -1)
-		die("bind");
+		die("bind() failed");
 
-	/* analyser
-	   ========
-	  1) put the found nodes in an array
-	  2) continue collecting
-	  3) compare the two lists for changes
-	  	if they match, goto step 2
-	  	else goto step 4
-	  4) ALERT
-	*/
-	int i, n;
-	unsigned long int *nodes = NULL;
-	unsigned long int *nodes_b = NULL;
-	unsigned long int node_list1[50];
-	unsigned long int node_list2[50];
-	unsigned long int dead_nodes[50];
 	
-	int *count = NULL;
-	int count_l1 = 0;
-	int count_l2 = 0;
-	int count_dead = 0;
-	
-	int complete = 0;
-	
+	time_t seconds;
+	unsigned int i, n, count, round;
 	int add = 1;
-	int found = 0;
-
-	/* init */
-	nodes = node_list1;
-	nodes_b = node_list2;
-	count = &count_l1;
+	node nodes[NODE_COUNT];
+	
+	round = count = 0;
 
 	while(1)
 	{
+		round++;
+		
 		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
 
-		/* inspect heartbeat */
-		if(buf[0] == '#')
+		if(vflag)
+			printf("Recieved heartbeat from %s(%s)\n", inet_ntoa(si_other.sin_addr), buf);
+
+		/* get current time */
+		unsigned long int time_now = (unsigned long int)time(NULL);
+		
+		/* first, search for it in the list */
+		add = 1;
+		for(i = 0; i < count; i++)
 		{
-			/* build reference list */
-			if(complete != 1)
+			/* is it there? */
+			if(nodes[i].ip == si_other.sin_addr.s_addr)
 			{
-				/* first, search for it in the list */
-				add = 1;
-				for(i = 0; i < *count; i++)
+				/* resurrected from the dead? :0 */
+				if(nodes[i].live == 0)
 				{
-					/* is it there? */
-					if(nodes[i] == si_other.sin_addr.s_addr)
+					/* spread the good news... */
+					pid_t pID = fork();
+					if (pID == 0)
 					{
-						/* the node is already in the list, round is complete */
-						if(vflag)
-						{
-							printf("[ round complete ]\n");
-							int b;
-							for(b = 0; b < *count; b++)
-							{
-								addr.s_addr = nodes[b];
-								char *ip_str = inet_ntoa(addr);
-								printf(" * %s\n", ip_str);
-							}	
-						}
-						complete++;
-						add = 0;
-						break;
+						addr.s_addr = nodes[i].ip;
+						char *ip_str = inet_ntoa(addr);
+						printf("resurrected: %s\n", ip_str);
+				
+						// time_now - nodes[i].time
+						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, (char *)0);
+						exit(0);
 					}
+					nodes[i].live = 1;
 				}
-			
-				/* new node, add to list */
-				if(add)
-				{
-					nodes[*count] = si_other.sin_addr.s_addr;
-					*count = *count + 1;
-				}
+				
+				/* update time*/
+				nodes[i].time = time_now;
+				nodes[i].uptime = time_now;
+				add = 0;
 			}
-			/* compare the lists */
 			else
 			{
-				/* check dead nodes list */
-				for(i = 0; i < count_dead; i++)
+				/* while at it, check the nodes timestamp */
+				if(nodes[i].live == 1 && time_now - nodes[i].time >= tvalue)
 				{
-					found = 0;
-					for(n = 0; n < count_l1; n++)
-					{
-						if(dead_nodes[i] == nodes[n])
-						{
-							/* node's not dead! */
-							found = 1;
-							break;
-						}
-					}
+					nodes[i].live = 0;
+					/* do something (run script) */
 					
-					if(!found)
+					pid_t pID = fork();
+					if (pID == 0)
 					{
-						/* do something (run script) */
-						if(fexists(SCRIPT_PATH))
-						{
-							pid_t pID = fork();
-							if (pID == 0)
-							{
-								addr.s_addr = dead_nodes[i];
-								char *ip_str = inet_ntoa(addr);
-								printf("dead: %s\n", ip_str);
-							
-								execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
-								exit(0);
-							}
-						}
+						addr.s_addr = nodes[i].ip;
+						char *ip_str = inet_ntoa(addr);
+						//printf("dead: %s\n", ip_str);
+				
+						// time_now - nodes[i].uptime
+						execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
+						exit(0);
 					}
 				}
-				
-				/* clear dead nodes list */
-				count_dead = 0;
-				
-				/* compare the lists */
-				if(count_l1 != count_l2) /* this if should be removed */
-				{
-					for(i = 0; i < count_l2; i++)
-					{
-						found = 0;
-						for(n = 0; n < count_l1; n++)
-						{
-							if(nodes_b[i] == nodes[n])
-							{
-								found = 1;
-								break;
-							}
-						}
-					
-						if(!found)
-						{
-							/* not found */
-							/* add to dead nodes list */
-							addr.s_addr = nodes_b[i];
-							char *ip_str = inet_ntoa(addr);
-							printf("missed: %s\n", ip_str);
-							dead_nodes[count_dead++] = nodes_b[i];
-						}
-					}
-					
-					count_l2 = count_l1;
-					
-					if(nodes == &node_list1)
-					{
-						nodes = node_list2;
-						nodes_b = node_list1;
-					}
-					else
-					{
-						nodes = node_list1;
-						nodes_b = node_list2;
-					}
-				}
-				
-				count_l1 = 0;
-				complete = 0;
 			}
 		}
-		else
+		
+		if(add)
 		{
-			fprintf(stderr, "error: detected malformed heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
+			char *ip_str = inet_ntoa(si_other.sin_addr);
+			printf("new: %s\n", ip_str);
+			
+			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1 };
+			nodes[count] = node_new;
+			
+			count = count + 1;
 		}
 	}
 
@@ -361,8 +310,7 @@ static void pulse(void)
 {
 	struct sockaddr_in sock;
 	int s, i, slen = sizeof(sock);
-	char buf[BUFLEN] = "#";
-
+	
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 		die("couldn't create socket");
 
@@ -378,10 +326,11 @@ static void pulse(void)
 		if(vflag)
 			printf("[ heartbeat ]\n");
 			
-		if (sendto(s, buf, BUFLEN, 0, (struct sockaddr *)&sock, slen) == -1)
+		if (sendto(s, gvalue, strlen(gvalue), 0, (struct sockaddr *)&sock, slen) == -1)
 			die("failed to send");
 
-		sleep(rvalue);
+
+		nanosleep(rvalue * 1000);
 	}
 
 	close(s);
