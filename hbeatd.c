@@ -9,7 +9,7 @@
 #include <string.h>
 #include <time.h>
 
-#define HBEATD_VERSION "1.3.0 beta"
+#define HBEATD_VERSION "1.3.1"
 
 #define NODE_COUNT 10000
 #define INT_SLEEP 1000
@@ -31,6 +31,7 @@ typedef struct {
 	unsigned long int time;
 	unsigned long int uptime;
 	unsigned int live;
+	char *groupname;
 } node;
 
 static void pulse(void);
@@ -76,6 +77,18 @@ int sig;
 		exit(0);
 		break;
 	}
+}
+int msleep(unsigned long millisec)
+{
+    struct timespec req = { 0 };
+    time_t sec = (int)(millisec / 1000);
+    millisec = millisec - (sec * 1000);
+    req.tv_sec = sec;
+    req.tv_nsec = millisec * 1000000L;
+    while(nanosleep(&req, &req) == -1)
+         continue;
+         
+    return 1;
 }
 
 
@@ -141,12 +154,12 @@ int main(int argc, char *argv[])
 	if(!sflag)
 	{
 		printf("PULSE MODE\n");
-		printf("Sending heartbeats to %s:%d(%s)...\n", dvalue, Pvalue, gvalue);
+		printf("sending heartbeats to %s:%d(%s)...\n", dvalue, Pvalue, gvalue);
 	}
 	else
 	{
 		printf("SENSOR MODE\n");
-		printf("Listening on *:%d...\n", Pvalue);
+		printf("listening on *:%d...\n", Pvalue);
 	}
 
 	/* daemonize */
@@ -202,6 +215,7 @@ int main(int argc, char *argv[])
 	
 	int s, slen = sizeof(si_other);
 	char buf[BUFLEN];
+	int buf_len = 0;
 
 	if((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 		die("couldn't create socket");
@@ -219,6 +233,7 @@ int main(int argc, char *argv[])
 	
 	time_t seconds;
 	unsigned int i, n, count, round;
+	unsigned long int time_now;
 	int add = 1;
 	node nodes[NODE_COUNT];
 	
@@ -227,15 +242,21 @@ int main(int argc, char *argv[])
 	while(1)
 	{
 		round++;
-		
+
+		for(n = 0; n <= buf_len; n++) {
+			buf[n] = (char)0;
+		}
+			
 		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
 
 		if(vflag)
-			printf("Recieved heartbeat from %s(%s)\n", inet_ntoa(si_other.sin_addr), buf);
+			printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
+
+		buf_len = strlen(buf);
 
 		/* get current time */
-		unsigned long int time_now = (unsigned long int)time(NULL);
+		time_now = (unsigned long int)time(NULL);
 		
 		/* first, search for it in the list */
 		add = 1;
@@ -247,16 +268,24 @@ int main(int argc, char *argv[])
 				/* resurrected from the dead? :0 */
 				if(nodes[i].live == 0)
 				{
+					/* update groupname */
+					char *groupname = malloc(buf_len + 1);
+					memcpy(groupname, buf, buf_len);
+		
+					if(nodes[i].groupname != NULL)
+						free(nodes[i].groupname);
+					nodes[i].groupname = groupname;
+					
 					/* spread the good news... */
 					pid_t pID = fork();
 					if (pID == 0)
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-						printf("resurrected: %s\n", ip_str);
+						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
 				
 						// time_now - nodes[i].time
-						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, (char *)0);
+						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 					nodes[i].live = 1;
@@ -273,17 +302,17 @@ int main(int argc, char *argv[])
 				if(nodes[i].live == 1 && time_now - nodes[i].time >= tvalue)
 				{
 					nodes[i].live = 0;
-					/* do something (run script) */
 					
+					/* do something (run script) */
 					pid_t pID = fork();
 					if (pID == 0)
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-						//printf("dead: %s\n", ip_str);
-				
+						printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
+					
 						// time_now - nodes[i].uptime
-						execl(SCRIPT_PATH, SCRIPT_PATH, "rm", ip_str, (char *)0);
+						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 				}
@@ -292,13 +321,26 @@ int main(int argc, char *argv[])
 		
 		if(add)
 		{
-			char *ip_str = inet_ntoa(si_other.sin_addr);
-			printf("new: %s\n", ip_str);
+			char *groupname = malloc(buf_len + 1);
+			memcpy(groupname, buf, buf_len);
 			
-			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1 };
+			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1, groupname };
 			nodes[count] = node_new;
 			
 			count = count + 1;
+			
+			/* do something (run script) */
+			pid_t pID = fork();
+			if (pID == 0)
+			{
+				addr.s_addr = nodes[i].ip;
+				char *ip_str = inet_ntoa(addr);
+				printf("new: %s(%s)\n", ip_str, node_new.groupname);
+		
+				// time_now - nodes[i].uptime
+				execl(SCRIPT_PATH, SCRIPT_PATH, "new", ip_str, nodes[i].groupname, (char *)0);
+				exit(0);
+			}
 		}
 	}
 
@@ -330,7 +372,7 @@ static void pulse(void)
 			die("failed to send");
 
 
-		nanosleep(rvalue * 1000);
+		msleep(rvalue);
 	}
 
 	close(s);

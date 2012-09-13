@@ -15,35 +15,39 @@ See the LICENSE file
 
 Usage
 =====
- usage: hbeatd [-v [-s | -p [-d]] -P -r]
-  -p	run as heartbeat pulse (default)
-  -s	run as heartbeat sensor
-  -v	verbose mode
-  -d	destination ip adress (default = 127.0.0.1)
-  -P	destination port number (default = 6220)
-  -i	interval in milliseconds (default = 1000)
-  -g	server group (default = misc)
-  -t	tolerance level (default = 4)
+usage: hbeatd [-v [-s | -p [-d]] -P -r]
+ -p	run as heartbeat pulse (default)
+ -s	run as heartbeat sensor
+ -v	verbose mode
+ -d	destination ip adress (default = 127.0.0.1)
+ -P	destination port number (default = 6220)
+ -i	interval in milliseconds (default = 1000)
+ -g	server group (default = misc)
+ -t	tolerance level (default = 4)
   
 How it works
 ============
- The pulse program on the nodes sends udp packages to chosen sensor. The sensor
- collects the ip's and builds a list. Then it collects ip's again and then
- compare the lists. If the lists is different, some action is taken and the list
- is updated. The action in this case is running a script located at
- /etc/hbeatd/rc.d.
+The pulse program on the nodes sends udp packages to chosen sensor. The sensor
+collects the ip's and builds a list. Then it collects ip's again and then
+compare the lists. If the lists is different, some action is taken and the list
+is updated. The action in this case is running a script located at
+/etc/hbeatd/rc.d.
  
 Script
 ======
 The script has two arguments, command and node ip. The command argument can be 
-rm or add.
+new, dead and up.
 
 Example rc.d:
 -------------
 #!/bin/sh
 
-if [ "$1" = "rm" ]; then
-        echo "node $2 is dead" > /home/jack/temp/test
+if [ "$1" = "dead" ]; then
+        echo "dead: $2($3)" >> /tmp/hbeatd.log
+elif [ "$1" = "up" ]; then
+        echo "up: $2($3)" >> /tmp/hbeatd.log
+elif [ "$1" = "new" ]; then
+        echo "new: $2($3)" >> /tmp/hbeatd.log
 fi
 
 exit
@@ -51,8 +55,8 @@ exit
 
 Installation
 ============
- make
- su
- make install
+make
+su
+make install
 
 
