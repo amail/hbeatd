@@ -24,21 +24,29 @@ usage: hbeatd [-v [-s | -p [-d]] -P -r]
  -i	interval in milliseconds (default = 1000)
  -g	server group (default = misc)
  -t	tolerance level (default = 4)
-  
+
+Example
+-------
+Sensor (10 seconds tolerence level):
+ hbeatd -s -t 10
+
+Nodes (800 milliseconds pulse):
+ hbeatd -i 800 -d 192.168.1.50
+
 How it works
 ============
 The pulse program on the nodes sends udp packages to chosen sensor. The sensor
-collects the ip's and builds a list. Then it collects ip's again and then
-compare the lists. If the lists is different, some action is taken and the list
-is updated. The action in this case is running a script located at
-/etc/hbeatd/rc.d.
+collects the ip's along with the server group and builds a list. Everytime a new
+heartbeat is received it will update the timestamp for the node and check the
+list for dead nodes (nodes with a timestamp older than the tolerance level). If 
+a node is dead, a script located at /etc/hbeatd/rc.d will run.
  
 Script
 ======
 The script has two arguments, command and node ip. The command argument can be 
 new, dead and up.
 
-Example rc.d:
+Example rc.d
 -------------
 #!/bin/sh
 
