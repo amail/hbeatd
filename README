@@ -1,70 +1,90 @@
-=======================
-Comfirm hbeatd - README
-=======================
-(C) 2012 Comfirm AB
-
-Simple, lightweight and zero-configuration heartbeat sensor and pulse generator.
-
-Authors:
-Jack Engqvist Johansson, Comfirm AB
-http://comfirm.se
-
-License:
-BSD 3-Clause
-See the LICENSE file
-
-Usage
-=====
-usage: hbeatd [-v [-s | -p [-d]] -P -r]
- -p	run as heartbeat pulse (default)
- -s	run as heartbeat sensor
- -v	verbose mode
- -d	destination ip adress (default = 127.0.0.1)
- -P	destination port number (default = 6220)
- -i	interval in milliseconds (default = 1000)
- -g	server group (default = misc)
- -t	tolerance level (default = 4)
-
-Example
--------
-Sensor (10 seconds tolerance level):
- hbeatd -s -t 10
-
-Nodes (800 milliseconds pulse):
- hbeatd -i 800 -d 192.168.1.50
-
-How it works
-============
-The pulse program on the nodes sends udp packages to chosen sensor. The sensor
-collects the ip's along with the server group and builds a list. Everytime a new
-heartbeat is received it will update the timestamp for the node and check the
-list for dead nodes (nodes with a timestamp older than the tolerance level). If 
-a node is dead, a script located at /etc/hbeatd/rc.d will run.
- 
-Script
-======
-The script has two arguments, command and node ip. The command argument can be 
-new, dead and up.
-
-Example rc.d
--------------
-#!/bin/sh
-
-if [ "$1" = "dead" ]; then
-        echo "dead: $2($3)" >> /tmp/hbeatd.log
-elif [ "$1" = "up" ]; then
-        echo "up: $2($3)" >> /tmp/hbeatd.log
-elif [ "$1" = "new" ]; then
-        echo "new: $2($3)" >> /tmp/hbeatd.log
-fi
-
-exit
--------------
-
-Installation
-============
-make
-su
-make install
+HBEATD(7)                                                            HBEATD(7)
 
 
+
+NAME
+       hbeatd -- a simple and lightweight heartbeat sensor and pulse program
+
+SYNOPSIS
+       hbeatd [ options... ]
+       hbeatd [ -pv ] [ -d ip ] [ -P port ] [ -i interval ] [ -g group ]
+       hbeatd [ -sv ] [ -P port ] [ -t tolerance ]
+
+DESCRIPTION
+       hbeatd  is  a  simple and lightweight program for sending and receiving
+       heartbeats that can be used to check the status of nodes in  a  cluster
+       of servers. The pulse program on the nodes sends udp packages to chosen
+       sensor. The sensor collects the ip's along with the  server  group  and
+       builds a list. Everytime a new heartbeat is received it will update the
+       timestamp for the node and check the list for dead nodes (nodes with  a
+       timestamp  older than the tolerance level). If a node is dead, a script
+       located at /etc/hbeatd/rc.d will run.
+
+OPTIONS
+       Unless specifically stated otherwise, options  are  applicable  in  all
+       operating modes.
+
+       -p     Run hbeatd in pulse mode.
+
+       -s     Run hbeatd in sensor mode.
+
+       -v     Run in verbose mode, not as daemon.
+
+       -d ip   Destination  ip  address  (only  available  in pulse mode).  The
+              default is 127.0.0.1.
+
+       -P port Destination port number (only available  in  pulse  mode).   The
+              default is 6220.
+
+       -i interval
+              The  interval  in milliseconds between pulses (only available in
+              pulse mode).  The default is 1000 (1 second).
+
+       -g group
+              A group name ex. 'web' or 'db',  good  when  building  lists  of
+              available nodes for deployment and maintenance etc. (only avail-
+              able in pulse mode).  The default is 'misc'.
+
+       -t tolerance
+              The number of seconds before reporting that  the  node  is  dead
+              (only available in sensor mode).  The default is 4.
+
+EXAMPLES
+       hbeat -d 192.168.0.50
+              Start hbeatd in pulse mode.
+
+       hbeatd -p -i 800 -v
+              Start  hbeatd  in  pulse  mode  without  daemonizing it. Sending
+              heartbeats with 800 milliseconds interval.
+
+       hbeatd -s
+              Start hbeatd in sensor mode.
+
+       hbeatd -s -t 20
+              Start hbeatd in sensor mode with a tolereance of 20 seconds.
+
+       hbeatd -s -P 8910 -v
+              Start hbeatd in sensor mode on port 8910 without daemonizing  it
+              (good for debugging).
+
+FILES
+       /etc/hbeatd/rc.d
+              An executable file that runs everytime hbeatd founds a new, dead
+              or resurrected node.  The script or program can take three argu-
+              ments; status, ip and group.
+              Example sh-script:
+
+              if [ "$1" = "dead" ]; then
+                   echo "dead: $2($3)" >> /tmp/hbeatd.log
+              elif [ "$1" = "up" ]; then
+                   echo "up: $2($3)" >> /tmp/hbeatd.log
+              elif [ "$1" = "new" ]; then
+                   echo "new: $2($3)" >> /tmp/hbeatd.log
+              fi
+
+AUTHOR
+       Jack Engqvist Johansson <jack.johansson@comfirm.se>
+
+
+
+Hbeatd Version 1.3.1           14 September 2012                     HBEATD(7)

@@ -42,16 +42,10 @@ static void die(char *s)
 }
 static void usage(void)
 {
-	(void)fprintf(stderr, "usage: hbeatd [-v [-s | -p [-d] -i -g] -P]\n");
-	(void)fprintf(stderr, "  -p\trun as pulse generator (default)\n");
-	(void)fprintf(stderr, "  -s\trun as heartbeat sensor\n");
-	(void)fprintf(stderr, "  -v\tverbose mode\n");
-	(void)fprintf(stderr, "  -d\tdestination ip adress (pulse only)\n");
-	(void)fprintf(stderr, "  -P\tdestination port number (default = 6220)\n");
-	(void)fprintf(stderr, "  -i\tinterval in milliseconds (default = 1000)\n");
-	(void)fprintf(stderr, "  -g\tserver group (default = misc)\n");
-	(void)fprintf(stderr, "  -t\ttolerance level (default = 4)\n");
- 
+	(void)fprintf(stderr, "usage:\n");
+	(void)fprintf(stderr, "\thbeatd [ -pv ] [ -d ip ] [ -P port ] [ -i interval ] [ -g group ]\n");
+	(void)fprintf(stderr, "\thbeatd [ -sv ] [ -P port ] [ -t tolerance ]\n");
+
 	exit(1);
 }
 static int fexists(char *fname)
@@ -87,7 +81,7 @@ int msleep(unsigned long millisec)
     req.tv_nsec = millisec * 1000000L;
     while(nanosleep(&req, &req) == -1)
          continue;
-         
+
     return 1;
 }
 
@@ -139,7 +133,7 @@ int main(int argc, char *argv[])
 				usage();
 		}
 	}
-	
+
 	if(dvalue == NULL)
 		dvalue = SRV_IP;
 	if(Pvalue == 0)
@@ -166,11 +160,11 @@ int main(int argc, char *argv[])
 	if(!vflag)
 	{
 		int f;
-		
+
 		/* close all descriptors */
 		for (f = getdtablesize(); f >= 0; --f)
 			close(f);
-	
+
 		/* fork */
 		f = fork();
 		if (f < 0)
@@ -179,12 +173,12 @@ int main(int argc, char *argv[])
 		/* exit parent */
 		if (f > 0)
 			exit(0);
-		
+
 		/* continue */
 		setsid();
 		umask(027);
 		chdir("/");
-		
+
 		/* handle signals */
 		signal(SIGCHLD,SIG_IGN); /* ignore child */
 		signal(SIGTSTP,SIG_IGN); /* ignore tty signals */
@@ -202,17 +196,17 @@ int main(int argc, char *argv[])
 		(void)pulse();
 		exit(0);
 	}
-	
+
 	/* sensor mode */
 	if(!fexists(SCRIPT_PATH))
 	{
 		die("/etc/hbeatd/rc.d does not exist");
 	}
-	
+
 	/* socket */
 	struct sockaddr_in sock, si_other;
 	struct in_addr addr;
-	
+
 	int s, slen = sizeof(si_other);
 	char buf[BUFLEN];
 	int buf_len = 0;
@@ -222,21 +216,21 @@ int main(int argc, char *argv[])
 
 	memset((char *) &sock, 0, sizeof(sock));
 	memset((char *) &addr, 0, sizeof(addr));
-	
+
 	sock.sin_family = AF_INET;
 	sock.sin_port = htons(Pvalue);
 	sock.sin_addr.s_addr = htonl(INADDR_ANY);
-	
+
 	if(bind(s, (struct sockaddr *)&sock, sizeof(sock)) == -1)
 		die("bind() failed");
 
-	
+
 	time_t seconds;
 	unsigned int i, n, count, round;
 	unsigned long int time_now;
 	int add = 1;
 	node nodes[NODE_COUNT];
-	
+
 	round = count = 0;
 
 	while(1)
@@ -246,7 +240,7 @@ int main(int argc, char *argv[])
 		for(n = 0; n <= buf_len; n++) {
 			buf[n] = (char)0;
 		}
-			
+
 		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
 
@@ -257,7 +251,7 @@ int main(int argc, char *argv[])
 
 		/* get current time */
 		time_now = (unsigned long int)time(NULL);
-		
+
 		/* first, search for it in the list */
 		add = 1;
 		for(i = 0; i < count; i++)
@@ -271,11 +265,11 @@ int main(int argc, char *argv[])
 					/* update groupname */
 					char *groupname = malloc(buf_len + 1);
 					memcpy(groupname, buf, buf_len);
-		
+
 					if(nodes[i].groupname != NULL)
 						free(nodes[i].groupname);
 					nodes[i].groupname = groupname;
-					
+
 					/* spread the good news... */
 					pid_t pID = fork();
 					if (pID == 0)
@@ -283,14 +277,14 @@ int main(int argc, char *argv[])
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
 						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
-				
+
 						// time_now - nodes[i].time
 						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 					nodes[i].live = 1;
 				}
-				
+
 				/* update time*/
 				nodes[i].time = time_now;
 				nodes[i].uptime = time_now;
@@ -302,7 +296,7 @@ int main(int argc, char *argv[])
 				if(nodes[i].live == 1 && time_now - nodes[i].time >= tvalue)
 				{
 					nodes[i].live = 0;
-					
+
 					/* do something (run script) */
 					pid_t pID = fork();
 					if (pID == 0)
@@ -310,7 +304,7 @@ int main(int argc, char *argv[])
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
 						printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
-					
+
 						// time_now - nodes[i].uptime
 						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
@@ -318,17 +312,17 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-		
+
 		if(add)
 		{
 			char *groupname = malloc(buf_len + 1);
 			memcpy(groupname, buf, buf_len);
-			
+
 			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1, groupname };
 			nodes[count] = node_new;
-			
+
 			count = count + 1;
-			
+
 			/* do something (run script) */
 			pid_t pID = fork();
 			if (pID == 0)
@@ -336,7 +330,7 @@ int main(int argc, char *argv[])
 				addr.s_addr = nodes[i].ip;
 				char *ip_str = inet_ntoa(addr);
 				printf("new: %s(%s)\n", ip_str, node_new.groupname);
-		
+
 				// time_now - nodes[i].uptime
 				execl(SCRIPT_PATH, SCRIPT_PATH, "new", ip_str, nodes[i].groupname, (char *)0);
 				exit(0);
@@ -352,7 +346,7 @@ static void pulse(void)
 {
 	struct sockaddr_in sock;
 	int s, i, slen = sizeof(sock);
-	
+
 	if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 		die("couldn't create socket");
 
@@ -367,7 +361,7 @@ static void pulse(void)
 	{
 		if(vflag)
 			printf("[ heartbeat ]\n");
-			
+
 		if (sendto(s, gvalue, strlen(gvalue), 0, (struct sockaddr *)&sock, slen) == -1)
 			die("failed to send");
 
