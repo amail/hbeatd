@@ -5,9 +5,16 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <semaphore.h>
 #include <string.h>
 #include <time.h>
+
+#include <errno.h>
+
 
 #define HBEATD_VERSION "1.3.1"
 
@@ -33,6 +40,13 @@ typedef struct {
 	unsigned int live;
 	char *groupname;
 } node;
+
+typedef struct {
+	sem_t resource, mutex;
+	node nodes[NODE_COUNT];
+	unsigned int count;
+} container;
+
 
 static void pulse(void);
 static void die(char *s)
@@ -95,8 +109,9 @@ int main(int argc, char *argv[])
 	dvalue = NULL;
 	gvalue = NULL;
 	Pvalue = rvalue = tvalue = 0;
+	unsigned int iserver = 0;
 
-	while ((c = getopt(argc, argv, "spvhd:P:i:g:t:")) != -1)
+	while ((c = getopt(argc, argv, "spvhqd:P:i:g:t:")) != -1)
 	{
 		switch (c) {
 			case 's':
@@ -127,6 +142,9 @@ int main(int argc, char *argv[])
 			     break;
 			case 't':
 			     tvalue = atoi(optarg);
+			     break;
+			case 'q':
+				 iserver = 1;
 			     break;
 			case '?':
 			default:
@@ -190,6 +208,113 @@ int main(int argc, char *argv[])
 		/* done */
 	}
 
+	/* memory sharing */
+	container *memory;
+	int fd = shm_open("/tmp/hbeatd-shm.tmp", O_RDWR | O_CREAT, 0777);
+
+	if (fd == -1) {
+		die("shm_open failed");
+	}
+
+	ftruncate(fd, sizeof(container));
+	memory = mmap(NULL, sizeof(container), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+
+	/* info server mode (experimental) */
+	if(iserver == 1) {
+		pid_t pid = fork();
+		if (pid == 0)
+		{
+			struct sockaddr_storage their_addr;
+			socklen_t addr_size;
+			char s[INET6_ADDRSTRLEN];
+
+			struct addrinfo hints, *res;
+			int sockfd, sockfd_new;
+
+			memset(&hints, 0, sizeof hints);
+			hints.ai_family = AF_INET;
+			hints.ai_socktype = SOCK_STREAM;
+			hints.ai_flags = AI_PASSIVE;
+
+			getaddrinfo(NULL, "3490", &hints, &res);
+
+			sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+			bind(sockfd, res->ai_addr, res->ai_addrlen);
+			listen(sockfd, 5);
+
+			while(1) {
+				addr_size = sizeof their_addr;
+				sockfd_new = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
+
+				printf("server: got connection from %s\n", "jack");
+
+				char mesg[99999], *reqline[3], data_to_send[1024], path[99999];
+				int rcvd, fd, bytes_read;
+
+				memset( (void*)mesg, (int)'\0', 99999 );
+				rcvd = recv(sockfd_new, mesg, 99999, 0);
+				printf("%s", mesg);
+
+				/* send the status message */
+				char *response;
+				response = malloc(sizeof(int) * 600);
+				response[0] = '\0';
+
+				int q, w, index, ip_len;
+				index = 0;
+
+				response[index++] = '{';
+				response[index++] = '\"';
+				response[index++] = 'n';
+				response[index++] = '\"';
+				response[index++] = ':';
+				response[index++] = '[';
+				for(q = 0; q < memory->count; q++) {
+					struct in_addr addr2;
+					addr2.s_addr = memory->nodes[q].ip;
+					char *ip_str = inet_ntoa(addr2);
+
+					if(q != 0)
+						response[index++] = ',';
+
+					response[index++] = '{';
+					response[index++] = '\"';
+					response[index++] = 'i';
+					response[index++] = '\"';
+					response[index++] = ':';
+					response[index++] = '\"';
+					for(w = 0; w < strlen(ip_str); w++) { 
+						response[index++] = ip_str[w];
+					}
+					response[index++] = '\"';
+					response[index++] = ',';
+					response[index++] = '\"';
+					response[index++] = 't';
+					response[index++] = '\"';
+					response[index++] = ':';
+					char buffer[50];
+					sprintf(buffer, "%d", memory->nodes[q].time);
+					for(w = 0; w < strlen(buffer); w++) { 
+						response[index++] = buffer[w];
+					}
+					response[index++] = '}';
+
+				}
+				response[index++] = ']';
+				response[index++] = '}';
+				response[index++] = (char)0;
+
+				send(sockfd_new, response, strlen(response), 0);
+				close(sockfd_new);
+			}
+			close(sockfd);
+
+
+			die("information server started.... nothing to do, quiting!\n");
+			exit(0);
+		}
+	}
+
 	/* pulse mode */
 	if(!sflag)
 	{
@@ -229,9 +354,10 @@ int main(int argc, char *argv[])
 	unsigned int i, n, count, round;
 	unsigned long int time_now;
 	int add = 1;
-	node nodes[NODE_COUNT];
+	node *nodes = memory->nodes;
 
 	round = count = 0;
+	memory->count = 0;
 
 	while(1)
 	{
@@ -244,8 +370,8 @@ int main(int argc, char *argv[])
 		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
 
-		if(vflag)
-			printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
+		//if(vflag)
+			//printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
 
 		buf_len = strlen(buf);
 
@@ -276,7 +402,7 @@ int main(int argc, char *argv[])
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
+//						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
 
 						// time_now - nodes[i].time
 						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
@@ -303,7 +429,7 @@ int main(int argc, char *argv[])
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-						printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
+						//printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
 
 						// time_now - nodes[i].uptime
 						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
@@ -322,6 +448,7 @@ int main(int argc, char *argv[])
 			nodes[count] = node_new;
 
 			count = count + 1;
+			memory->count = count;
 
 			/* do something (run script) */
 			pid_t pID = fork();
@@ -329,7 +456,7 @@ int main(int argc, char *argv[])
 			{
 				addr.s_addr = nodes[i].ip;
 				char *ip_str = inet_ntoa(addr);
-				printf("new: %s(%s)\n", ip_str, node_new.groupname);
+			//	printf("new: %s(%s)\n", ip_str, node_new.groupname);
 
 				// time_now - nodes[i].uptime
 				execl(SCRIPT_PATH, SCRIPT_PATH, "new", ip_str, nodes[i].groupname, (char *)0);
@@ -359,8 +486,8 @@ static void pulse(void)
 
 	while (1)
 	{
-		if(vflag)
-			printf("[ heartbeat ]\n");
+//		if(vflag)
+//			printf("[ heartbeat ]\n");
 
 		if (sendto(s, gvalue, strlen(gvalue), 0, (struct sockaddr *)&sock, slen) == -1)
 			die("failed to send");
