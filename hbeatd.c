@@ -13,15 +13,13 @@
 #include <string.h>
 #include <time.h>
 
-#include <errno.h>
 
+#define HBEATD_VERSION "2.0.0"
 
-#define HBEATD_VERSION "1.3.1"
-
-#define NODE_COUNT 10000
+#define NODE_COUNT 256
 #define INT_SLEEP 1000
 #define BUFLEN 256
-#define SRV_GROUP "misc"
+#define SRV_GROUP "srv"
 #define SRV_PORT 6220
 #define SRV_IP "127.0.0.1"
 #define TOLERANCE 4
@@ -45,10 +43,15 @@ typedef struct {
 	sem_t resource, mutex;
 	node nodes[NODE_COUNT];
 	unsigned int count;
+	unsigned int heartbeats;
 } container;
 
+/* globals */
+container *memory;
+int fd;
 
 static void pulse(void);
+static void http_srv(void);
 static void die(char *s)
 {
 	fprintf(stderr, "error: %s\n", s);
@@ -209,8 +212,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* memory sharing */
-	container *memory;
-	int fd = shm_open("/tmp/hbeatd-shm.tmp", O_RDWR | O_CREAT, 0777);
+	fd = shm_open("/tmp/hbeatd-shm.tmp", O_RDWR | O_CREAT, 0777);
 
 	if (fd == -1) {
 		die("shm_open failed");
@@ -219,101 +221,9 @@ int main(int argc, char *argv[])
 	ftruncate(fd, sizeof(container));
 	memory = mmap(NULL, sizeof(container), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
 
-	/* info server mode (experimental) */
-	if(iserver == 1) {
-		pid_t pid = fork();
-		if (pid == 0)
-		{
-			struct sockaddr_storage their_addr;
-			socklen_t addr_size;
-			char s[INET6_ADDRSTRLEN];
-
-			struct addrinfo hints, *res;
-			int sockfd, sockfd_new;
-
-			memset(&hints, 0, sizeof hints);
-			hints.ai_family = AF_INET;
-			hints.ai_socktype = SOCK_STREAM;
-			hints.ai_flags = AI_PASSIVE;
-
-			getaddrinfo(NULL, "3490", &hints, &res);
-
-			sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-			bind(sockfd, res->ai_addr, res->ai_addrlen);
-			listen(sockfd, 5);
-
-			while(1) {
-				addr_size = sizeof their_addr;
-				sockfd_new = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
-
-				printf("server: got connection from %s\n", "jack");
-
-				char mesg[99999], *reqline[3], data_to_send[1024], path[99999];
-				int rcvd, fd, bytes_read;
-
-				memset( (void*)mesg, (int)'\0', 99999 );
-				rcvd = recv(sockfd_new, mesg, 99999, 0);
-				printf("%s", mesg);
-
-				/* send the status message */
-				char *response;
-				response = malloc(sizeof(int) * 600);
-				response[0] = '\0';
-
-				int q, w, index, ip_len;
-				index = 0;
-
-				response[index++] = '{';
-				response[index++] = '\"';
-				response[index++] = 'n';
-				response[index++] = '\"';
-				response[index++] = ':';
-				response[index++] = '[';
-				for(q = 0; q < memory->count; q++) {
-					struct in_addr addr2;
-					addr2.s_addr = memory->nodes[q].ip;
-					char *ip_str = inet_ntoa(addr2);
-
-					if(q != 0)
-						response[index++] = ',';
-
-					response[index++] = '{';
-					response[index++] = '\"';
-					response[index++] = 'i';
-					response[index++] = '\"';
-					response[index++] = ':';
-					response[index++] = '\"';
-					for(w = 0; w < strlen(ip_str); w++) { 
-						response[index++] = ip_str[w];
-					}
-					response[index++] = '\"';
-					response[index++] = ',';
-					response[index++] = '\"';
-					response[index++] = 't';
-					response[index++] = '\"';
-					response[index++] = ':';
-					char buffer[50];
-					sprintf(buffer, "%d", memory->nodes[q].time);
-					for(w = 0; w < strlen(buffer); w++) { 
-						response[index++] = buffer[w];
-					}
-					response[index++] = '}';
-
-				}
-				response[index++] = ']';
-				response[index++] = '}';
-				response[index++] = (char)0;
-
-				send(sockfd_new, response, strlen(response), 0);
-				close(sockfd_new);
-			}
-			close(sockfd);
-
-
-			die("information server started.... nothing to do, quiting!\n");
-			exit(0);
-		}
-	}
+	/* http info server? */
+	if(iserver == 1 && sflag == 1)
+		http_srv();
 
 	/* pulse mode */
 	if(!sflag)
@@ -351,24 +261,25 @@ int main(int argc, char *argv[])
 
 
 	time_t seconds;
-	unsigned int i, n, count, round;
+	unsigned int i, n, count;
 	unsigned long int time_now;
 	int add = 1;
 	node *nodes = memory->nodes;
 
-	round = count = 0;
+	count = 0;
 	memory->count = 0;
+	memory->heartbeats = 0;
 
 	while(1)
 	{
-		round++;
-
 		for(n = 0; n <= buf_len; n++) {
 			buf[n] = (char)0;
 		}
 
 		if(recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *)&si_other, &slen) == -1)
 			die("recvfrom() failed");
+
+		memory->heartbeats = memory->heartbeats + 1;
 
 		//if(vflag)
 			//printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
@@ -396,6 +307,9 @@ int main(int argc, char *argv[])
 						free(nodes[i].groupname);
 					nodes[i].groupname = groupname;
 
+					/* update the uptime */
+					nodes[i].uptime = time_now;
+
 					/* spread the good news... */
 					pid_t pID = fork();
 					if (pID == 0)
@@ -404,16 +318,14 @@ int main(int argc, char *argv[])
 						char *ip_str = inet_ntoa(addr);
 //						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
 
-						// time_now - nodes[i].time
 						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 					nodes[i].live = 1;
 				}
 
-				/* update time*/
+				/* update last seen time*/
 				nodes[i].time = time_now;
-				nodes[i].uptime = time_now;
 				add = 0;
 			}
 			else
@@ -441,11 +353,15 @@ int main(int argc, char *argv[])
 
 		if(add)
 		{
+			/* set group name */
 			char *groupname = malloc(buf_len + 1);
 			memcpy(groupname, buf, buf_len);
 
 			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1, groupname };
 			nodes[count] = node_new;
+
+			/* set the uptime */
+			nodes[i].uptime = time_now;
 
 			count = count + 1;
 			memory->count = count;
@@ -467,6 +383,170 @@ int main(int argc, char *argv[])
 
 	close(s);
 	return 0;
+}
+
+static void http_srv(void)
+{
+	/* fork */
+	pid_t pid = fork();
+	if (pid == 0)
+	{
+		char mesg[99999], *reqline[3], data_to_send[1024], path[99999];
+		int rcvd, fd, bytes_read;
+
+		char *response;
+		response = malloc(sizeof(int) * 2200);
+
+		char *body;
+		body = malloc(sizeof(int) * 2000);
+
+		char *headers;
+		headers = malloc(sizeof(int) * 200);
+
+		int q, w, index, ip_len, len_headers;
+		char buffer[50];
+
+		/* listen on traffic */
+		struct sockaddr_storage their_addr;
+		socklen_t addr_size;
+		char s[INET6_ADDRSTRLEN];
+
+		struct addrinfo hints, *res;
+		int sockfd, sockfd_new;
+
+		memset(&hints, 0, sizeof hints);
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_flags = AI_PASSIVE;
+
+		getaddrinfo(NULL, "3490", &hints, &res);
+
+		sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+		bind(sockfd, res->ai_addr, res->ai_addrlen);
+		listen(sockfd, 5);
+
+		while(1) {
+			/* accept the connection */
+			addr_size = sizeof(their_addr);
+			sockfd_new = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
+
+			memset( (void*)mesg, (int)'\0', 99999 );
+			rcvd = recv(sockfd_new, mesg, 99999, 0);
+			printf("%s", mesg);
+
+			if(mesg[0] == 'D')
+			{
+				/* clean up */
+				free(response);
+				free(body);
+				free(headers);
+
+				die("server shutdown requested by client");
+				exit(0);
+			}
+
+			index = 0;
+
+			/* headers */
+			sprintf(headers, "%s", "HTTP/1.1 200 OK\r\nServer: hbeatd/2.0.0\r\nCache-Control: private\r\nContent-length: 000");
+
+			body[index++] = '\r';
+			body[index++] = '\n';
+			body[index++] = '\r';
+			body[index++] = '\n';
+
+			/* start json */
+			body[index++] = '{';
+
+			/* uptime seen */
+			body[index++] = '\"';
+			body[index++] = 'h';
+			body[index++] = '\"';
+			body[index++] = ':';
+			sprintf(buffer, "%d", memory->heartbeats);
+			for(w = 0; w < strlen(buffer); w++) {
+				body[index++] = buffer[w];
+			}
+			body[index++] = ',';
+
+			body[index++] = '\"';
+			body[index++] = 'n';
+			body[index++] = '\"';
+			body[index++] = ':';
+			body[index++] = '[';
+
+			/* node info json */
+			for(q = 0; q < memory->count; q++) {
+				struct in_addr addr2;
+				addr2.s_addr = memory->nodes[q].ip;
+				char *ip_str = inet_ntoa(addr2);
+
+				if(q != 0)
+					body[index++] = ',';
+
+				body[index++] = '{';
+
+				/* ip */
+				body[index++] = '\"';
+				body[index++] = 'i';
+				body[index++] = '\"';
+				body[index++] = ':';
+				body[index++] = '\"';
+				for(w = 0; w < strlen(ip_str); w++) {
+					body[index++] = ip_str[w];
+				}
+				body[index++] = '\"';
+				body[index++] = ',';
+
+				/* last seen */
+				body[index++] = '\"';
+				body[index++] = 't';
+				body[index++] = '\"';
+				body[index++] = ':';
+				sprintf(buffer, "%d", memory->nodes[q].time);
+				for(w = 0; w < strlen(buffer); w++) {
+					body[index++] = buffer[w];
+				}
+				body[index++] = ',';
+
+				/* uptime seen */
+				body[index++] = '\"';
+				body[index++] = 'u';
+				body[index++] = '\"';
+				body[index++] = ':';
+				sprintf(buffer, "%d", memory->nodes[q].uptime);
+				for(w = 0; w < strlen(buffer); w++) {
+					body[index++] = buffer[w];
+				}
+
+				body[index++] = '}';
+			}
+
+			/* end json */
+			body[index++] = ']';
+			body[index++] = '}';
+			body[index++] = (char)0;
+
+			/* put it together */
+			sprintf(response, "%s%d%s", headers, strlen(body) - 4, body);
+			printf("\n\n%s\n\n", response);
+
+			send(sockfd_new, response, strlen(response), 0);
+			close(sockfd_new);
+		}
+		close(sockfd);
+
+		/* clean up */
+		free(response);
+		free(body);
+		free(headers);
+
+		die("information server started.... nothing to do, quiting!\n");
+		exit(0);
+	}
+	else {
+		return;
+	}
 }
 
 static void pulse(void)
