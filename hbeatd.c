@@ -52,6 +52,7 @@ int fd;
 
 static void pulse(void);
 static void http_srv(void);
+
 static void die(char *s)
 {
 	fprintf(stderr, "error: %s\n", s);
@@ -403,7 +404,7 @@ static void http_srv(void)
 		char *headers;
 		headers = malloc(sizeof(int) * 200);
 
-		int q, w, index, ip_len, len_headers;
+		int q, w, index, ip_len, len_headers, yes;
 		char buffer[50];
 
 		/* listen on traffic */
@@ -411,7 +412,7 @@ static void http_srv(void)
 		socklen_t addr_size;
 		char s[INET6_ADDRSTRLEN];
 
-		struct addrinfo hints, *res;
+		struct addrinfo hints, *serverinfo, *p;
 		int sockfd, sockfd_new;
 
 		memset(&hints, 0, sizeof hints);
@@ -419,18 +420,56 @@ static void http_srv(void)
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_flags = AI_PASSIVE;
 
-		getaddrinfo(NULL, "3490", &hints, &res);
+		if(getaddrinfo(NULL, "3490", &hints, &serverinfo) != 0) {
+			die("getaddrinfo() failed");
+		}
 
-		sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-		bind(sockfd, res->ai_addr, res->ai_addrlen);
-		listen(sockfd, 5);
+		for(p = serverinfo; p != NULL; p = p->ai_next) {
+			if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+				fprintf(stderr, "error: socket() failed\n");
+				continue;
+			}
+
+			yes = 1;
+			if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+				fprintf(stderr, "error: setsockopt() failed\n");
+				continue;
+			}
+
+			if(bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+				close(sockfd);
+				fprintf(stderr, "error: bind() failed\n");
+				continue;
+			}
+
+			break;
+		}
+
+		if(p == NULL) {
+			die("bind() failed");
+		}
+
+		freeaddrinfo(serverinfo);
+
+		if(listen(sockfd, 5) == -1) {
+			die("listen() failed");
+		}
+
+		// reap all dead processes??
+
+		printf("info server: started\n");
 
 		while(1) {
 			/* accept the connection */
 			addr_size = sizeof(their_addr);
 			sockfd_new = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
 
-			memset( (void*)mesg, (int)'\0', 99999 );
+			if(sockfd_new == -1) {
+				fprintf(stderr, "accept() failed\n");
+				continue;
+			}
+
+			memset((void*)mesg, (int)'\0', 99999);
 			rcvd = recv(sockfd_new, mesg, 99999, 0);
 			printf("%s", mesg);
 
@@ -531,7 +570,10 @@ static void http_srv(void)
 			sprintf(response, "%s%d%s", headers, strlen(body) - 4, body);
 			printf("\n\n%s\n\n", response);
 
-			send(sockfd_new, response, strlen(response), 0);
+			if(send(sockfd_new, response, strlen(response), 0) == -1) {
+				fprintf(stderr, "send() failed\n");
+				close(sockfd_new);
+			}
 			close(sockfd_new);
 		}
 		close(sockfd);
