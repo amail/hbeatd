@@ -35,6 +35,7 @@ typedef struct {
 	unsigned long int ip;
 	unsigned long int time;
 	unsigned long int uptime;
+	unsigned long int beat;
 	unsigned int live;
 	char *groupname;
 } node;
@@ -314,6 +315,7 @@ int main(int argc, char *argv[])
 
 					/* update the uptime */
 					nodes[i].uptime = time_now;
+					nodes[i].beat = 1;
 
 					/* spread the good news... */
 					pid_t pID = fork();
@@ -341,7 +343,7 @@ int main(int argc, char *argv[])
 			char *groupname = malloc(buf_len + 1);
 			memcpy(groupname, buf, buf_len);
 
-			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1, groupname };
+			node node_new = { si_other.sin_addr.s_addr, time_now, time_now, 1, 1, groupname };
 			nodes[count] = node_new;
 
 			/* set the uptime */
@@ -500,7 +502,7 @@ static void http_srv(void)
 			memset((void*)mesg, (int)'\0', 99999);
 			rcvd = recv(sockfd_new, mesg, 99999, 0);
 			printf("%s", mesg);
-  
+
 			/* get current time */
 			time_now = (unsigned long int)time(NULL);
 
@@ -587,6 +589,19 @@ static void http_srv(void)
 				sprintf(buffer, "%d", memory->nodes[q].time - memory->nodes[q].uptime);
 				for(w = 0; w < strlen(buffer); w++) {
 					body[index++] = buffer[w];
+				}
+				body[index++] = ',';
+
+				/* heartbeat */
+				body[index++] = '\"';
+				body[index++] = 'b';
+				body[index++] = '\"';
+				body[index++] = ':';
+				if(memory->nodes[q].beat == 1) {
+					body[index++] = '1';
+				}
+				else {
+					body[index++] = '0';
 				}
 				body[index++] = ',';
 
