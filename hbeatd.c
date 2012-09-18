@@ -50,8 +50,9 @@ typedef struct {
 container *memory;
 int fd;
 
-static void pulse(void);
+static void node_checker(void);
 static void http_srv(void);
+static void pulse(void);
 
 static void die(char *s)
 {
@@ -260,6 +261,9 @@ int main(int argc, char *argv[])
 	if(bind(s, (struct sockaddr *)&sock, sizeof(sock)) == -1)
 		die("bind() failed");
 
+	/* fork and check nodes */
+	node_checker();
+
 
 	time_t seconds;
 	unsigned int i, n, count;
@@ -329,27 +333,6 @@ int main(int argc, char *argv[])
 				nodes[i].time = time_now;
 				add = 0;
 			}
-			else
-			{
-				/* while at it, check the nodes timestamp */
-				if(nodes[i].live == 1 && time_now - nodes[i].time >= tvalue)
-				{
-					nodes[i].live = 0;
-
-					/* do something (run script) */
-					pid_t pID = fork();
-					if (pID == 0)
-					{
-						addr.s_addr = nodes[i].ip;
-						char *ip_str = inet_ntoa(addr);
-						//printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
-
-						// time_now - nodes[i].uptime
-						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
-						exit(0);
-					}
-				}
-			}
 		}
 
 		if(add)
@@ -386,6 +369,50 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+static void node_checker(void)
+{
+	/* fork so the node checker could work alone */
+	pid_t pID = fork();
+	if (pID == 0)
+	{
+		int i, count;
+		unsigned long int time_now;
+		struct in_addr addr;
+		node *nodes = memory->nodes;
+
+		while(1)
+		{
+			time_now = (unsigned long int)time(NULL);
+			count = memory->count;
+
+			for(i = 0; i < count; i++)
+			{
+				if(nodes[i].live == 1 && time_now - nodes[i].time >= tvalue)
+				{
+					nodes[i].live = 0;
+
+					/* do something (run script) */
+					pid_t pID = fork();
+					if (pID == 0)
+					{
+						addr.s_addr = nodes[i].ip;
+						char *ip_str = inet_ntoa(addr);
+						//printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
+
+						// time_now - nodes[i].uptime
+						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
+						exit(0);
+					}
+				}
+			}
+
+			msleep(1000);
+		}
+
+		exit(0);
+	}
+}
+
 static void http_srv(void)
 {
 	/* fork */
@@ -406,6 +433,7 @@ static void http_srv(void)
 
 		int q, w, index, ip_len, len_headers, yes;
 		char buffer[50];
+		unsigned long int time_now;
 
 		/* listen on traffic */
 		struct sockaddr_storage their_addr;
@@ -472,6 +500,9 @@ static void http_srv(void)
 			memset((void*)mesg, (int)'\0', 99999);
 			rcvd = recv(sockfd_new, mesg, 99999, 0);
 			printf("%s", mesg);
+  
+			/* get current time */
+			time_now = (unsigned long int)time(NULL);
 
 			if(mesg[0] == 'D')
 			{
@@ -542,20 +573,33 @@ static void http_srv(void)
 				body[index++] = 't';
 				body[index++] = '\"';
 				body[index++] = ':';
-				sprintf(buffer, "%d", memory->nodes[q].time);
+				sprintf(buffer, "%d", time_now - memory->nodes[q].time);
 				for(w = 0; w < strlen(buffer); w++) {
 					body[index++] = buffer[w];
 				}
 				body[index++] = ',';
 
-				/* uptime seen */
+				/* uptime */
 				body[index++] = '\"';
 				body[index++] = 'u';
 				body[index++] = '\"';
 				body[index++] = ':';
-				sprintf(buffer, "%d", memory->nodes[q].uptime);
+				sprintf(buffer, "%d", memory->nodes[q].time - memory->nodes[q].uptime);
 				for(w = 0; w < strlen(buffer); w++) {
 					body[index++] = buffer[w];
+				}
+				body[index++] = ',';
+
+				/* live */
+				body[index++] = '\"';
+				body[index++] = 'l';
+				body[index++] = '\"';
+				body[index++] = ':';
+				if(memory->nodes[q].live == 1) {
+					body[index++] = '1';
+				}
+				else {
+					body[index++] = '0';
 				}
 
 				body[index++] = '}';
