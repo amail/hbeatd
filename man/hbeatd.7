@@ -33,7 +33,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ..
 .
 .
-.TH HBEATD 7 "14 September 2012" "Hbeatd Version 1.3.1"
+.TH HBEATD 7 "13 December 2012" "Hbeatd Version 2.0.0"
 .
 .
 .\" -----------------------------------------------------------------
@@ -55,7 +55,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .br
 .B hbeatd
 [
-.B -pv\&
+.B -pvq\&
 ]
 [
 .B -d\&
@@ -98,10 +98,10 @@ is a simple and lightweight program for sending and receiving
 heartbeats that can be used to check the status of nodes in a cluster
 of servers. The pulse program on the nodes sends udp packages to
 chosen sensor. The sensor collects the ip's along with the server
-group and builds a list. Everytime a new heartbeat is received it
-will update the timestamp for the node and check the list for dead
+group and builds a list. Everytime a new heartbeat is received the
+list will be updated with a fresh timestamp and checked for dead
 nodes (nodes with a timestamp older than the tolerance level). If a
-node is dead, a script located at /etc/hbeatd/rc.d will run.
+node is dead, a script located at /etc/hbeatd/notify will run.
 .
 .\" -----------------------------------------------------------------
 .
@@ -123,6 +123,10 @@ in sensor mode.
 .TP
 .B \-v
 Run in verbose mode, not as daemon.
+.
+.TP
+.BI \-q
+Enable the http server to access status from a web API.
 .
 .TP
 .BI \-d ip
@@ -173,7 +177,7 @@ in sensor mode.
 .
 .TP
 hbeatd -s -t 20
-Start 
+Start
 .B hbeatd
 in sensor mode with a tolereance of 20 seconds.
 .
@@ -181,13 +185,14 @@ in sensor mode with a tolereance of 20 seconds.
 hbeatd -s -P 8910 -v
 Start
 .B hbeatd
-in sensor mode on port 8910 without daemonizing it (good for debugging).
+in sensor mode on port 8910 without daemonizing it (good for
+debugging).
 .
 .\" -----------------------------------------------------------------
 .
 .SH FILES
 .TP
-.B /etc/hbeatd/rc.d
+.B /etc/hbeatd/notify
 An executable file that runs everytime
 .B hbeatd
 founds a new, dead or resurrected node.
@@ -210,6 +215,21 @@ elif [ "$1" = "new" ]; then
 	echo "new: $2($3)" >> /tmp/hbeatd.log
 .br
 fi
+.
+.TP
+.B /etc/hbeatd/hbeatd.conf
+Configuration file used when starting
+.B hbeatd
+from an init script.
+.
+.TP
+.B /etc/init.d/hbeatd, /etc/rc.d/hbeatd
+Init script for automatic start of
+.B hbeatd
+at boot. Can also be used for a more simple way to start
+.B hbeatd
+with the configurations in hbeatd.conf instead of passing them along
+as arguments.
 .
 .\" -----------------------------------------------------------------
 .

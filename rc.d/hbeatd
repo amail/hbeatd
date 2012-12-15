@@ -1,0 +1,49 @@
+#!/bin/sh
+
+# PROVIDE: hbeatd
+# REQUIRE: DAEMON
+# BEFORE:  LOGIN
+# KEYWORD: nojail
+
+. /etc/rc.subr
+
+name=hbeatd
+rcvar=hbeatd_enable
+
+start_precmd="${name}_prestart"
+
+hbeatd_prestart()
+{
+	# Read configuration variable file if it is present
+	[ -r "/etc/${name}/${name}.conf" ] && . "/etc/${name}/${name}.conf"
+
+	if [ "$HBEATD_MODE" = "sensor" ]; then
+		rc_flags="${rc_flags} -s"
+		if [ "$HBEATD_TOLERANCE" != "" ]; then
+			rc_flags="${rc_flags} -t $HBEATD_TOLERANCE"
+		fi
+		if [ "$HBEATD_HTTPD" = "yes" ]; then
+			rc_flags="${rc_flags} -q"
+		fi
+	else
+		rc_flags="${rc_flags} -p"
+		if [ "$HBEATD_DESTINATION" != "" ]; then
+			rc_flags="${rc_flags} -d $HBEATD_DESTINATION"
+		fi
+		if [ "$HBEATD_INTERVAL" != "" ]; then
+			rc_flags="${rc_flags} -i $HBEATD_INTERVAL"
+		fi
+		if [ "$HBEATD_GROUP" != "" ]; then
+			rc_flags="${rc_flags} -g $HBEATD_GROUP"
+		fi
+	fi
+
+	if [ "$HBEATD_PORT" != "" ]; then
+		rc_flags="${rc_flags} -P $HBEATD_PORT"
+	fi
+}
+
+command="/usr/local/sbin/${name}"
+
+load_rc_config "$name"
+run_rc_command "$1"

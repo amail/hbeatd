@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<link type="text/css" rel="stylesheet" href="css/bootstrap.min.css"/>
+	<link type="text/css" rel="stylesheet" href="css/bootstrap-responsive.min.css"/>
+	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.8.1/jquery.min.js"></script>
+	<script>
+		var timeBefore;
+		var timeAfter;
+		var latency = 0;
+
+		$(document).ready(function(){
+			window.setTimeout(getNodes, 200);
+
+			$('#btn_shutdown').click(function(){
+				$.ajax({ type: 'DELETE', url: '../nodex.html' });	
+			});
+		});
+
+		function getNodes(){
+			timeBefore = new Date();
+			$.ajax({
+				type: 'GET',
+				//url: '../nodex.html',
+				url: 'http://localhost:3490',
+				data: 'a',
+				success: function(data){
+					timeAfter = new Date();
+					latency = timeAfter.getTime() - timeBefore.getTime();
+
+					var nodesOld= $('#nodes');
+					var nodes = nodesOld.clone();
+					nodes.html('');
+
+					$('#heartbeats').html(data.h);
+
+					var row = $('<tr></tr>');
+					var cell = $('<td></td>');
+					var ts = new Date().getTime();
+					for(i = 0; i < data.n.length; i++) {
+						// get last updated time
+						var time = new Date(data.n[i].t * 1000);
+						// get up time (ts)
+						var uptime = new Date(data.n[i].u * 1000);
+						var timeText = timeSince(uptime);
+						var lastSeen = timeSince(time);
+						lastSeen = '0 seconds ago';
+						var flash = '';
+						if(data.n[i].b > 0)
+							flash = 'flash';
+
+
+						var row_tmp = row.clone();
+						var icon = '';
+						var cell_tmp = cell.clone().html(data.n[i].i);
+						var cell_tmp1 = cell.clone().html(uptime.toLocaleString());
+						var cell_tmp2 = cell.clone().html(lastSeen + ' ago');
+						var cell_tmp3 = cell.clone().html(timeText);
+						//cell_tmp1.attr('style', 'width: 200px;');
+						cell_tmp2.attr('style', 'width: 130px;');
+						cell_tmp3.attr('style', 'width: 110px;');
+
+						var LED = '<span style="font-size: 18px; color: green; margin-right: 10px;" class="' + flash + '">&bull;</span>';
+
+						if(data.n[i].l < 1) {
+							row_tmp.addClass('errior');
+							icon = '<i class="icon-stop"></i> ';
+							LED = '<span style="font-size: 18px; color: red; margin-right: 10px;">&bull;</span>';
+						}
+						else if(data.n[i].b < 0) {
+							row_tmp.addClass('warining');
+							icon = '<i class="icon-arrow-down"></i> ';
+							LED = '<span style="font-size: 18px; color: orange; margin-right: 10px;" class="' + flash + '">&bull;</span>';
+						}
+						else {
+							row_tmp.addClass('sucicess');
+							icon = '<i class="icon-arrow-up"></i> ';
+						}
+
+						nodes.append(row_tmp.append(cell_tmp.prepend(LED))
+								.append(cell_tmp2)
+								.append(cell_tmp3.prepend(icon))
+						);
+					}
+
+					if(data.n.length < 1) {
+						nodes.replaceWith('<tr><td colspan="4">No nodes found</td></tr>');
+					}
+					nodesOld.replaceWith(nodes);
+
+					window.setTimeout(function() {$('.flash').animate({opacity: 0}, 80)}, 10);
+					//$('.flash').stop().css("opacity", "1").animate({opacity: 0}, 200);
+
+					window.setTimeout(getNodes, 150 - latency);
+				},
+				error: function(){
+					$('#nodes').html('<tr class="warning"><td colspan="4">No nodes found</td></tr>');
+					window.setTimeout(getNodes, 30000);
+				},
+				dataType: 'json'
+			});
+		}
+
+function timeSince(date) {
+	var seconds = Math.floor((date) / 1000);
+	var interval = Math.floor(seconds / 31536000);
+				    
+	if (interval > 1) {
+		return interval + " years";
+	}
+	
+	interval = Math.floor(seconds / 2592000);
+	if (interval > 1) {
+		return interval + " months";
+	}
+	
+	interval = Math.floor(seconds / 86400);
+	if (interval > 1) {
+		return interval + " days";
+	}
+	
+	interval = Math.floor(seconds / 3600);
+		if (interval > 1) {
+	return interval + " hours";
+	}
+	
+	interval = Math.floor(seconds / 60);
+	if (interval > 1) {
+		return interval + " minutes";
+	}
+	return Math.floor(seconds) + " seconds";
+}
+
+	</script>
+</head>
+<body>
+	<div class="container">
+		<h3>mutex nodes</h3>
+		<p class="lead">real time status direct from hbeatd!</p>
+		<p class="lead">total number of heartbeats: <span id="heartbeats"></span></p>
+		<button id="btn_shutdown" class="btn btn-large btn-warning"><i class="icon-off icon-white"></i> Shutdown</button>
+		<br><br>
+		<table class="table table-striped table-bordered table-hover tabile-condensed">
+			<thead>
+				<tr>
+					<th><i class="icon-hdd"></i> IP</th>
+					<th><i class="icon-eye-open"></i> Last seen</th>
+					<th><i class="icon-time"></i> Uptime</th>
+				</tr>
+			</thead>
+			<tbody id="nodes"></tbody>
+		</table>
+	</div>
+</body>
+</html>

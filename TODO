@@ -1,0 +1,13 @@
+* Add API to manpage
+* Return milliseconds instead of 0/1 in key b.
+
+* FAST TEST on bsd/linux
+* Release
+
+NEXTv:
+* Make dev, nodes as inodes/dev files?
+* Http server and cli client in different prgs?
+* Send hostname and/or group
+* Better API
+* UDP api for terminal apps
+* More settings

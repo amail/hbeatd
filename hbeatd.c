@@ -12,6 +12,7 @@
 #include <semaphore.h>
 #include <string.h>
 #include <time.h>
+#include <zlib.h>
 
 
 #define HBEATD_VERSION "2.0.0"
@@ -23,7 +24,7 @@
 #define SRV_PORT 6220
 #define SRV_IP "127.0.0.1"
 #define TOLERANCE 4
-#define SCRIPT_PATH "/etc/hbeatd/rc.d"
+#define SCRIPT_PATH "/etc/hbeatd/notify"
 
 
 /* settings */
@@ -49,7 +50,7 @@ typedef struct {
 
 /* globals */
 container *memory;
-int fd;
+int fd, script_exists;
 
 static void node_checker(void);
 static void http_srv(void);
@@ -105,6 +106,13 @@ int msleep(unsigned long millisec)
     return 1;
 }
 
+int64_t timespecDiff(struct timespec *timeA_p, struct timespec *timeB_p)
+{
+	  return ((timeA_p->tv_sec * 1000000000) + timeA_p->tv_nsec) -
+		             ((timeB_p->tv_sec * 1000000000) + timeB_p->tv_nsec);
+}
+
+
 
 int main(int argc, char *argv[])
 {
@@ -115,6 +123,7 @@ int main(int argc, char *argv[])
 	dvalue = NULL;
 	gvalue = NULL;
 	Pvalue = rvalue = tvalue = 0;
+	script_exists = 0;
 	unsigned int iserver = 0;
 
 	while ((c = getopt(argc, argv, "spvhqd:P:i:g:t:")) != -1)
@@ -204,18 +213,18 @@ int main(int argc, char *argv[])
 		chdir("/");
 
 		/* handle signals */
-		signal(SIGCHLD,SIG_IGN); /* ignore child */
-		signal(SIGTSTP,SIG_IGN); /* ignore tty signals */
-		signal(SIGTTOU,SIG_IGN);
-		signal(SIGTTIN,SIG_IGN);
-		signal(SIGHUP,signal_handler); /* catch hangup signal */
-		signal(SIGTERM,signal_handler); /* catch kill signal */
+		signal(SIGCHLD, SIG_IGN); /* ignore child */
+		signal(SIGTSTP, SIG_IGN); /* ignore tty signals */
+		signal(SIGTTOU, SIG_IGN);
+		signal(SIGTTIN, SIG_IGN);
+		signal(SIGHUP, signal_handler); /* catch hangup signal */
+		signal(SIGTERM, signal_handler); /* catch kill signal */
 
 		/* done */
 	}
 
 	/* memory sharing */
-	fd = shm_open("/tmp/hbeatd-shm.tmp", O_RDWR | O_CREAT, 0777);
+	fd = shm_open("/tmp/hbeatd-shm.tmp", O_RDWR|O_CREAT, 0777);
 
 	if (fd == -1) {
 		die("shm_open failed");
@@ -236,9 +245,9 @@ int main(int argc, char *argv[])
 	}
 
 	/* sensor mode */
-	if(!fexists(SCRIPT_PATH))
+	if(fexists(SCRIPT_PATH))
 	{
-		die("/etc/hbeatd/rc.d does not exist");
+		script_exists = 1;
 	}
 
 	/* socket */
@@ -287,8 +296,8 @@ int main(int argc, char *argv[])
 
 		memory->heartbeats = memory->heartbeats + 1;
 
-		//if(vflag)
-			//printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
+		if(vflag)
+			printf("recieved heartbeat from %s\n", inet_ntoa(si_other.sin_addr));
 
 		buf_len = strlen(buf);
 
@@ -315,7 +324,6 @@ int main(int argc, char *argv[])
 
 					/* update the uptime */
 					nodes[i].uptime = time_now;
-					nodes[i].beat = 1;
 
 					/* spread the good news... */
 					pid_t pID = fork();
@@ -323,9 +331,12 @@ int main(int argc, char *argv[])
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-//						printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
 
-						execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
+						if(vflag)
+							printf("resurrected: %s(%s)\n", ip_str, nodes[i].groupname);
+
+						if (script_exists)
+							execl(SCRIPT_PATH, SCRIPT_PATH, "up", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 					nodes[i].live = 1;
@@ -333,6 +344,7 @@ int main(int argc, char *argv[])
 
 				/* update last seen time*/
 				nodes[i].time = time_now;
+				nodes[i].beat = 1;
 				add = 0;
 			}
 		}
@@ -358,10 +370,12 @@ int main(int argc, char *argv[])
 			{
 				addr.s_addr = nodes[i].ip;
 				char *ip_str = inet_ntoa(addr);
-			//	printf("new: %s(%s)\n", ip_str, node_new.groupname);
 
-				// time_now - nodes[i].uptime
-				execl(SCRIPT_PATH, SCRIPT_PATH, "new", ip_str, nodes[i].groupname, (char *)0);
+				if(vflag)
+					printf("new: %s(%s)\n", ip_str, node_new.groupname);
+
+				if (script_exists)
+					execl(SCRIPT_PATH, SCRIPT_PATH, "new", ip_str, nodes[i].groupname, (char *)0);
 				exit(0);
 			}
 		}
@@ -373,7 +387,7 @@ int main(int argc, char *argv[])
 
 static void node_checker(void)
 {
-	/* fork so the node checker could work alone */
+	/* fork so the node checker can work alone */
 	pid_t pID = fork();
 	if (pID == 0)
 	{
@@ -399,10 +413,12 @@ static void node_checker(void)
 					{
 						addr.s_addr = nodes[i].ip;
 						char *ip_str = inet_ntoa(addr);
-						//printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
 
-						// time_now - nodes[i].uptime
-						execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
+						if(vflag)
+							printf("dead: %s(%s)\n", ip_str, nodes[i].groupname);
+
+						if (script_exists)
+							execl(SCRIPT_PATH, SCRIPT_PATH, "dead", ip_str, nodes[i].groupname, (char *)0);
 						exit(0);
 					}
 				}
@@ -494,6 +510,11 @@ static void http_srv(void)
 			addr_size = sizeof(their_addr);
 			sockfd_new = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
 
+			/* time measurement */
+			struct timespec start, end;
+			clock_gettime(CLOCK_MONOTONIC, &start);
+
+
 			if(sockfd_new == -1) {
 				fprintf(stderr, "accept() failed\n");
 				continue;
@@ -501,26 +522,52 @@ static void http_srv(void)
 
 			memset((void*)mesg, (int)'\0', 99999);
 			rcvd = recv(sockfd_new, mesg, 99999, 0);
-			printf("%s", mesg);
 
 			/* get current time */
 			time_now = (unsigned long int)time(NULL);
 
-			if(mesg[0] == 'D')
-			{
-				/* clean up */
-				free(response);
-				free(body);
-				free(headers);
 
-				die("server shutdown requested by client");
-				exit(0);
+			/* check http request */
+			if(strlen(mesg) < 3 ) {
+				/* bad request */
+				sprintf(headers, "%s", "HTTP/1.1 400 Bad Request\r\nServer: hbeatd/2.0.0\r\nAge: 0\r\nAccess-Control-Allow-Origin: *\r\nAllow: GET\r\nContent-length: 0");
+
+				if(send(sockfd_new, headers, strlen(headers), 0) == -1) {
+					fprintf(stderr, "send() failed\n");
+					close(sockfd_new);
+				}
+				close(sockfd_new);
+				continue;
 			}
+			else if(strncmp("OPTIONS ", mesg, 8) == 0) {
+				/* OPTIONS */
+				sprintf(headers, "%s", "HTTP/1.1 200 OK\r\nServer: hbeatd/2.0.0\r\nAge: 0\r\nAccess-Control-Allow-Origin: *\r\nAllow: OPTIONS,GET\r\nContent-length: 0\r\n\r\n");
+
+				if(send(sockfd_new, headers, strlen(headers), 0) == -1) {
+					fprintf(stderr, "send() failed\n");
+					close(sockfd_new);
+				}
+				close(sockfd_new);
+				continue;
+			}
+			else if(strncmp("GET ", mesg, 4) != 0) {
+				/* invalid method */
+				sprintf(headers, "%s", "HTTP/1.1 405 Method Not Allowed\r\nServer: hbeatd/2.0.0\r\nAge: 0\r\nAccess-Control-Allow-Origin: *\r\nAllow: GET\r\nContent-length: 0\r\n\r\n");
+
+				if(send(sockfd_new, headers, strlen(headers), 0) == -1) {
+					fprintf(stderr, "send() failed\n");
+					close(sockfd_new);
+				}
+				close(sockfd_new);
+				continue;
+			}
+
+			/* GET */
 
 			index = 0;
 
 			/* headers */
-			sprintf(headers, "%s", "HTTP/1.1 200 OK\r\nServer: hbeatd/2.0.0\r\nCache-Control: private\r\nContent-length: 000");
+			sprintf(headers, "%s", "HTTP/1.1 200 OK\r\nServer: hbeatd/2.0.0\r\nCache-Control: no-cache\r\nAge: 0\r\nAccess-Control-Allow-Origin: *\r\nContent-type: application/json\r\nContent-length: 000");
 
 			body[index++] = '\r';
 			body[index++] = '\n';
@@ -597,8 +644,9 @@ static void http_srv(void)
 				body[index++] = 'b';
 				body[index++] = '\"';
 				body[index++] = ':';
-				if(memory->nodes[q].beat == 1) {
+				if(memory->nodes[q].beat > 0) {
 					body[index++] = '1';
+					memory->nodes[q].beat = 0;
 				}
 				else {
 					body[index++] = '0';
@@ -627,13 +675,20 @@ static void http_srv(void)
 
 			/* put it together */
 			sprintf(response, "%s%d%s", headers, strlen(body) - 4, body);
-			printf("\n\n%s\n\n", response);
+
+			//msleep(200);
 
 			if(send(sockfd_new, response, strlen(response), 0) == -1) {
 				fprintf(stderr, "send() failed\n");
 				close(sockfd_new);
 			}
 			close(sockfd_new);
+
+			/* time measurements */
+			clock_gettime(CLOCK_MONOTONIC, &end);
+			uint64_t timeElapsed = timespecDiff(&end, &start);
+			printf("[http_src] request handled in: %f milliseconds\n", (double)((double)timeElapsed / 1000000.00));
+
 		}
 		close(sockfd);
 
@@ -667,8 +722,8 @@ static void pulse(void)
 
 	while (1)
 	{
-//		if(vflag)
-//			printf("[ heartbeat ]\n");
+		if(vflag)
+			printf("[ heartbeat ]\n");
 
 		if (sendto(s, gvalue, strlen(gvalue), 0, (struct sockaddr *)&sock, slen) == -1)
 			die("failed to send");
